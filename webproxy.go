@@ -3,6 +3,7 @@ package main
 
 import (
 	"flag"
+	"html/template"
 	"io"
 	"log"
 	"net"
@@ -17,13 +18,52 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		// Handle tunneling.
 		tunnel(w, r)
 	} else {
+		log.Printf(r.URL.Path)
+		if r.URL.Path == "/console" {
+			console(w, r)
+			return
+		}
 		handleHTTP(w, r)
 	}
+}
+
+// Request is an object containing information of
+// a request sent to the proxy.
+type Request struct {
+	URL string
+}
+
+// console serve the console management console
+func console(w http.ResponseWriter, r *http.Request) {
+	log.Printf("console requested")
+
+	req := Request{
+		URL: r.URL.Path,
+	}
+
+	tmp, err := template.ParseFiles("console.html")
+	if err != nil {
+		log.Printf("template parsing error: %v", err)
+	}
+
+	if r.Method == http.MethodPost {
+		log.Printf("%v", r.FormValue("URL"))
+		tmp.Execute(w, nil)
+		return
+	}
+
+	err = tmp.Execute(w, req)
+	if err != nil {
+		log.Printf("template executing error: %v", err)
+	}
+
 }
 
 // tunnel allows a client and destination server to
 // communicate through this proxy, using go routines.
 func tunnel(w http.ResponseWriter, r *http.Request) {
+	// Display the request.
+	log.Printf("Request: %v\n", r)
 	// Connect to desination.
 	dst, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
 	if err != nil {
@@ -97,5 +137,5 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	s.ListenAndServe()
+	log.Fatal(s.ListenAndServe())
 }
