@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"html/template"
 	"io"
@@ -185,6 +186,15 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Display the request.
 	log.Printf("HTTP Request: %v\n", r)
 
+	// Check cache.
+	data := cache[r.RequestURI]
+	if data != nil {
+		// Cache hit.
+		w.Write(data)
+		return
+	}
+
+	// Obtain direct from source.
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {
 		log.Printf("error in handling HTTP: %v", err)
@@ -193,20 +203,14 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	buf := new(bytes.Buffer)
+	io.Copy(buf, resp.Body)
+	data = buf.Bytes()
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	io.Copy(w, buf)
 
-	// Get and copy header.
-	// bodyBytes, err := ioutil.ReadAll(resp.Body)
-	// if err != nil {
-	// 	log.Printf("response header to byte array: %v", err)
-	// }
-	// log.Printf("body bytes: %v", bodyBytes)
-	// copyHeader(w.Header(), resp.Header)
-	// w.WriteHeader(resp.StatusCode)
-
-	// w.Write(bodyBytes)
+	log.Printf("cache: %v", string(data))
 }
 
 func main() {
