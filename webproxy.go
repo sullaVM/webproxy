@@ -173,14 +173,6 @@ func exchange(uri string, dst io.WriteCloser, src io.ReadCloser) {
 
 }
 
-func copyHeader(dst, src http.Header) {
-	for i, s := range src {
-		for _, ss := range s {
-			dst.Add(i, ss)
-		}
-	}
-}
-
 // handleHTTP handles the HTTP requests.
 func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Display the request.
@@ -204,13 +196,22 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	buf := new(bytes.Buffer)
+	copyHeader(buf, w.Header(), resp.Header)
 	io.Copy(buf, resp.Body)
 	data = buf.Bytes()
-	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, buf)
 
 	log.Printf("cache: %v", string(data))
+}
+
+func copyHeader(buf *bytes.Buffer, dst, src http.Header) {
+	for i, s := range src {
+		for _, ss := range s {
+			dst.Add(i, ss)
+			buf.Write([]byte(ss))
+		}
+	}
 }
 
 func main() {
