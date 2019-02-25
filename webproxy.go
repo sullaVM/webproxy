@@ -179,35 +179,71 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Display the request.
 	log.Printf("HTTP Request: %v\n", r)
 
-	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err != nil {
-		log.Printf("error in handling HTTP: %v", err)
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
+	uri := r.RequestURI
 
-	// Check cache.
-	data := cache[r.RequestURI]
+	// Check if the webpage being requested is cached.
+	data := cache[uri]
 	if data == nil {
-		// Obtain direct from source.
-		data, err = httputil.DumpResponse(resp, true)
-		if err != nil {
-			log.Printf("error dumping response: %v", err)
+		// Data is not in cache.
+		log.Printf("data not cached: %v", uri)
+		// Fetch data and update cache.
+		if ok := fetchAndUpdate(w, r); !ok {
+			log.Printf("error handling http: cannot fetch from server")
 			return
 		}
-		// Add the response to cache.
-		cache[r.RequestURI] = data
+		return
 	}
-	log.Printf("cache hit")
-	// Send the response to client.
+	log.Printf("cache hit for %v", uri)
+
+	// Send the response to client from cache dump.
 	newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
 	if err != nil {
 		log.Printf("error reading response: %v", err)
 	}
+	if newResp == nil {
+		// Response from dumped cache cannot be accessed.
+		// Fetch directly from server.
+		if ok := fetchAndUpdate(w, r); !ok {
+			log.Printf("error handling http: cannot fetch from server")
+			return
+		}
+		return
+	}
 	copyHeader(w.Header(), newResp.Header)
+	w.WriteHeader(newResp.StatusCode)
 	io.Copy(w, newResp.Body)
+}
 
+func fetchAndUpdate(w http.ResponseWriter, r *http.Request) bool {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		log.Printf("error in handling HTTP %v: %v", r.RequestURI, err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return false
+	}
 	defer resp.Body.Close()
+
+	// If there is no error in fetching data, put it to cache.
+	data, err := httputil.DumpResponse(resp, true)
+	if err != nil {
+		log.Printf("cached failed: error dumping response for %v: %v", r.RequestURI, err)
+		// If response cannot be dumped, do not cache. Return the original response.
+		copyHeader(w.Header(), resp.Header)
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	} else {
+		// If response is dumped, add it to cache.
+		cache[r.RequestURI] = data
+		// Send a response to requester from dump.
+		newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
+		if err != nil {
+			log.Printf("error reading response for %v: %v", r.RequestURI, err)
+		}
+		copyHeader(w.Header(), newResp.Header)
+		w.WriteHeader(newResp.StatusCode)
+		io.Copy(w, newResp.Body)
+	}
+	return true
 }
 
 func copyHeader(dst, src http.Header) {
