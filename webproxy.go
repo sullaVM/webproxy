@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"strings"
 	"time"
@@ -159,12 +160,12 @@ func tunnel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Allow client and destination to exchange packets through proxy.
-	go exchange(r.RequestURI, dst, clnt)
-	go exchange(r.RequestURI, clnt, dst)
+	go exchange(dst, clnt)
+	go exchange(clnt, dst)
 
 }
 
-func exchange(uri string, dst io.WriteCloser, src io.ReadCloser) {
+func exchange(dst io.WriteCloser, src io.ReadCloser) {
 	defer dst.Close()
 	defer src.Close()
 	io.Copy(dst, src)
@@ -178,38 +179,41 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Display the request.
 	log.Printf("HTTP Request: %v\n", r)
 
-	// Check cache.
-	data := cache[r.RequestURI]
-	if data != nil {
-		// Cache hit.
-		w.Write(data)
-		return
-	}
-
-	// Obtain direct from source.
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {
 		log.Printf("error in handling HTTP: %v", err)
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+
+	// Check cache.
+	data := cache[r.RequestURI]
+	if data == nil {
+		// Obtain direct from source.
+		data, err = httputil.DumpResponse(resp, true)
+		if err != nil {
+			log.Printf("error dumping response: %v", err)
+			return
+		}
+		// Add the response to cache.
+		cache[r.RequestURI] = data
+	}
+	log.Printf("cache hit")
+	// Send the response to client.
+	newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
+	if err != nil {
+		log.Printf("error reading response: %v", err)
+	}
+	copyHeader(w.Header(), newResp.Header)
+	io.Copy(w, newResp.Body)
+
 	defer resp.Body.Close()
-
-	buf := new(bytes.Buffer)
-	copyHeader(buf, w.Header(), resp.Header)
-	io.Copy(buf, resp.Body)
-	data = buf.Bytes()
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, buf)
-
-	log.Printf("cache: %v", string(data))
 }
 
-func copyHeader(buf *bytes.Buffer, dst, src http.Header) {
+func copyHeader(dst, src http.Header) {
 	for i, s := range src {
 		for _, ss := range s {
 			dst.Add(i, ss)
-			buf.Write([]byte(ss))
 		}
 	}
 }
