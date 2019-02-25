@@ -9,10 +9,21 @@
 <body>
 Your requested {{.URL}}
 
-<form method="POST">
+<h3>Web Proxy Management Console</h3>
+<form action="\block" method="POST">
   <label>URL to block:</label><br>
   <input type="text" name="URL"><br>
-  <input type="submit">
+  <input type="submit" value="submit">
+</form>
+
+<br>
+
+<h4>Blocked URLs</h4>
+<form action="/unblock" method="POST">
+  {{range .BlockedURLs}}
+    <input type="checkbox" name="blocked" value="{{.}}">{{.}}<br>
+  {{end}}
+  <input type="submit" value="submit">
 </form>
 
 </body>

@@ -22,20 +22,76 @@ var cache = make(map[string][]byte)
 // handler checks the request method and directs the
 // client to either tunnel or not.
 func handler(w http.ResponseWriter, r *http.Request) {
+	// Check if the URL requested is not blocked.
+	if isBlocked(r.RequestURI) {
+		log.Printf("URL requested is blocked: %v", r.RequestURI)
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	// If URL is not blocked, process request.
 	if r.Method == http.MethodConnect {
-		// Check if the URL requested is not blocked.
-		if isBlocked(r.URL.String()) {
-			log.Printf("URL requested is blocked")
-			return
-		}
 		// Handle tunneling.
 		tunnel(w, r)
 	} else {
 		if r.URL.Path == "/console" {
 			console(w, r)
 			return
+		} else if r.URL.Path == "/unblock" {
+			unblock(w, r)
+			return
 		}
 		handleHTTP(w, r)
+	}
+}
+
+func unblock(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		log.Printf("error parsing unblock form")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	vals := r.Form["blocked"]
+	for _, v := range vals {
+		log.Printf("unblock: %v", v)
+		f, err := os.OpenFile("tmp/block", os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			log.Printf("error opening file: %v", err)
+			f, err = os.Create("tmp/block")
+		}
+		defer f.Close()
+
+		// Check if the url is blocked by iterating through file.
+		var tmp []byte
+		scn := bufio.NewScanner(f)
+		for scn.Scan() {
+			log.Printf("here: %v val: %v", scn.Text(), v)
+
+			if !strings.Contains(scn.Text(), v) {
+				tmp = append(tmp, []byte(scn.Text()+"\n")...)
+			}
+		}
+		log.Printf("urls left: %v", string(tmp))
+		f.Write(tmp)
+
+	}
+	console(w, r)
+}
+
+// getFromCache looks for the uri in cache and returns
+// it if it is available, otherwise returns nil.
+func getFromCache(uri string) *[]byte {
+	if c, ok := cache[uri]; ok {
+		return &c
+	}
+	return nil
+}
+
+// addToCache adds the most recent page in cache if
+// it is not available.
+func addToCache(uri string, content []byte) {
+	if _, ok := cache[uri]; !ok {
+		cache[uri] = content
 	}
 }
 
@@ -58,27 +114,32 @@ func isBlocked(url string) bool {
 	return false
 }
 
-// getFromCache looks for the uri in cache and returns
-// it if it is available, otherwise returns nil.
-func getFromCache(uri string) *[]byte {
-	if c, ok := cache[uri]; ok {
-		return &c
+func getBlockedURLs() []string {
+	// Open the tracker file.
+	f, err := os.Open("tmp/block")
+	if err != nil {
+		log.Printf("blocked URL tracker file not opened: %v", err)
 	}
-	return nil
-}
+	defer f.Close()
 
-// addToCache adds the most recent page in cache if
-// it is not available.
-func addToCache(uri string, content []byte) {
-	if _, ok := cache[uri]; !ok {
-		cache[uri] = content
+	// Check if the url is blocked by iterating through file.
+	var res []string
+	scn := bufio.NewScanner(f)
+	for scn.Scan() {
+		res = append(res, scn.Text())
 	}
+
+	if res == nil {
+		res = append(res, "")
+	}
+	return res
 }
 
 // Request is an object containing information of
 // a request sent to the proxy.
 type Request struct {
-	URL string
+	URL         string
+	BlockedURLs []string
 }
 
 // console serve the console management console
@@ -86,7 +147,8 @@ func console(w http.ResponseWriter, r *http.Request) {
 	log.Printf("console requested")
 
 	req := Request{
-		URL: r.RequestURI,
+		URL:         r.RequestURI,
+		BlockedURLs: getBlockedURLs(),
 	}
 
 	tmp, err := template.ParseFiles("console.html")
@@ -114,7 +176,7 @@ func console(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		tmp.Execute(w, nil)
+		tmp.Execute(w, req)
 		return
 	}
 
