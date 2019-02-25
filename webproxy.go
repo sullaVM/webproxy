@@ -209,15 +209,39 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// Check if the response from cache is not expired.
+	exp := newResp.Header.Get("Expires")
+	if exp == "" {
+		log.Printf("%v: expiration not found, continue sending response", uri)
+	} else {
+		// Continue checking expiry.
+		expDate, err := http.ParseTime(exp)
+		if err != nil {
+			log.Printf("%v: cannot parse expiry time, continue sending response", uri)
+		} else {
+			if time.Now().After(expDate) {
+				// Cache is outdated. Fetch recent data.
+				if ok := fetchAndUpdate(w, r); !ok {
+					log.Printf("error handling http: cannot fetch from server")
+					return
+				}
+			}
+		}
+	}
+
+	// Return the data from cache.
 	copyHeader(w.Header(), newResp.Header)
 	w.WriteHeader(newResp.StatusCode)
 	io.Copy(w, newResp.Body)
 }
 
 func fetchAndUpdate(w http.ResponseWriter, r *http.Request) bool {
+	uri := r.RequestURI
+
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	if err != nil {
-		log.Printf("error in handling HTTP %v: %v", r.RequestURI, err)
+		log.Printf("error in handling HTTP %v: %v", uri, err)
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return false
 	}
@@ -225,19 +249,22 @@ func fetchAndUpdate(w http.ResponseWriter, r *http.Request) bool {
 
 	// If there is no error in fetching data, put it to cache.
 	data, err := httputil.DumpResponse(resp, true)
-	if err != nil {
-		log.Printf("cached failed: error dumping response for %v: %v", r.RequestURI, err)
+	cc := resp.Header.Get("Cache-control")
+	log.Printf("cache-control for %v: %v", uri, cc)
+	// If response cannot be dumped of if response has "no-cache" control.
+	if err != nil || cc == "no-cache" {
+		log.Printf("cached failed: error dumping response for %v: %v", uri, err)
 		// If response cannot be dumped, do not cache. Return the original response.
 		copyHeader(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	} else {
 		// If response is dumped, add it to cache.
-		cache[r.RequestURI] = data
+		cache[uri] = data
 		// Send a response to requester from dump.
 		newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
 		if err != nil {
-			log.Printf("error reading response for %v: %v", r.RequestURI, err)
+			log.Printf("error reading response for %v: %v", uri, err)
 		}
 		copyHeader(w.Header(), newResp.Header)
 		w.WriteHeader(newResp.StatusCode)
