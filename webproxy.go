@@ -179,35 +179,58 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Display the request.
 	log.Printf("HTTP Request: %v\n", r)
 
-	resp, err := http.DefaultTransport.RoundTrip(r)
-	if err != nil {
-		log.Printf("error in handling HTTP: %v", err)
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
 	// Check cache.
 	data := cache[r.RequestURI]
+
 	if data == nil {
-		// Obtain direct from source.
-		data, err = httputil.DumpResponse(resp, true)
-		if err != nil {
-			log.Printf("error dumping response: %v", err)
-			return
-		}
-		// Add the response to cache.
-		cache[r.RequestURI] = data
+		// If the requested page is not in cache.
+		updateCache(w, r)
 	}
-	log.Printf("cache hit")
-	// Send the response to client.
+
+	// If the requested page is in cache.
+	// ----------------------------------
+	// Read the response from the []byte in cache map.
 	newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
 	if err != nil {
 		log.Printf("error reading response: %v", err)
 	}
+
+	// Check if data in cache is expired.
+	exp := newResp.Header.Get("Expires")
+	if exp == "" {
+		log.Printf("header does not contain an Expires header")
+	} else {
+		log.Printf("time: %v", exp)
+		expTime, err := http.ParseTime(exp)
+		if err != nil {
+			log.Printf("error parsing Expires time: %v", err)
+		} else {
+			if time.Now().After(expTime) {
+				// Data in cache is expired.
+				log.Printf("data in cache is expired")
+
+				if !updateCache(w, r) {
+					log.Printf("updating cache failed")
+				}
+				data := cache[r.RequestURI]
+				// Update the response again.
+				newResp, err = http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
+				if err != nil {
+					log.Printf("error reading response: %v", err)
+				}
+			}
+		}
+	}
+
+	// Data in cache is not expired so return it to client.
+	if newResp == nil {
+		log.Printf("HTTP response is nil: %v", newResp)
+		return
+	}
+
 	copyHeader(w.Header(), newResp.Header)
 	io.Copy(w, newResp.Body)
 
-	defer resp.Body.Close()
 }
 
 func copyHeader(dst, src http.Header) {
@@ -216,6 +239,33 @@ func copyHeader(dst, src http.Header) {
 			dst.Add(i, ss)
 		}
 	}
+}
+
+// updateCache fetches data from the server being requested.
+func updateCache(w http.ResponseWriter, r *http.Request) bool {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		log.Printf("error in handling HTTP: %v", err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	}
+	defer resp.Body.Close()
+
+	// Obtain direct from source.
+	data, err := httputil.DumpResponse(resp, true)
+	if err != nil {
+		log.Printf("error dumping response: %v", err)
+		return false
+	}
+	// Add the response to cache.
+	cc := r.Header.Get("Cache-control")
+
+	if cc == "no-cache" {
+		// Do not cache this response.
+		log.Printf("cannot cache this response")
+		return false
+	}
+	cache[r.RequestURI] = data
+	return true
 }
 
 func main() {
