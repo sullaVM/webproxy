@@ -204,6 +204,8 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Display the request.
 	log.Printf("HTTP Request: %v\n", r)
 
+	start := time.Now()
+
 	uri := r.RequestURI
 
 	// Check if the webpage being requested is cached.
@@ -214,24 +216,28 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 		// Fetch data and update cache.
 		if ok := fetchAndUpdate(w, r); !ok {
 			log.Printf("error handling http: cannot fetch from server")
-			return
 		}
+		// Check time it takes.
+		time := time.Since(start)
+		log.Printf("request: %v, duration: %v, cached: no", uri, time)
 		return
 	}
 	log.Printf("cache hit for %v", uri)
 
 	// Send the response to client from cache dump.
 	newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
-	if err != nil {
-		log.Printf("error reading response: %v", err)
-	}
-	if newResp == nil {
+	if newResp == nil || err != nil {
 		// Response from dumped cache cannot be accessed.
 		// Fetch directly from server.
+		log.Printf("error reading response: %v", err)
+
 		if ok := fetchAndUpdate(w, r); !ok {
 			log.Printf("error handling http: cannot fetch from server")
-			return
 		}
+
+		// Check time it takes.
+		time := time.Since(start)
+		log.Printf("request: %v, duration: %v, cached: no", uri, time)
 		return
 	}
 
@@ -249,11 +255,17 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 				// Cache is outdated. Fetch recent data.
 				if ok := fetchAndUpdate(w, r); !ok {
 					log.Printf("error handling http: cannot fetch from server")
+
+					time := time.Since(start)
+					log.Printf("request: %v, duration: %v, cached: no", uri, time)
 					return
 				}
 			}
 		}
 	}
+
+	time := time.Since(start)
+	log.Printf("request: %v, duration: %v, cached: yes", uri, time)
 
 	// Return the data from cache.
 	copyHeader(w.Header(), newResp.Header)
