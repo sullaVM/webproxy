@@ -22,12 +22,14 @@ var cache = make(map[string][]byte)
 // handler checks the request method and directs the
 // client to either tunnel or not.
 func handler(w http.ResponseWriter, r *http.Request) {
+	// Check if the URL requested is not blocked.
+	if isBlocked(r.RequestURI) {
+		log.Printf("URL requested is blocked: %v", r.RequestURI)
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	if r.Method == http.MethodConnect {
-		// Check if the URL requested is not blocked.
-		if isBlocked(r.URL.String()) {
-			log.Printf("URL requested is blocked")
-			return
-		}
 		// Handle tunneling.
 		tunnel(w, r)
 	} else {
@@ -78,7 +80,29 @@ func addToCache(uri string, content []byte) {
 // Request is an object containing information of
 // a request sent to the proxy.
 type Request struct {
-	URL string
+	URL         string
+	BlockedURLs []string
+}
+
+func getBlockedURLs() []string {
+	// Open the tracker file.
+	f, err := os.Open("tmp/block")
+	if err != nil {
+		log.Printf("blocked URL tracker file not opened: %v", err)
+	}
+	defer f.Close()
+
+	// Check if the url is blocked by iterating through file.
+	var res []string
+	scn := bufio.NewScanner(f)
+	for scn.Scan() {
+		res = append(res, scn.Text())
+	}
+
+	if res == nil {
+		res = append(res, "")
+	}
+	return res
 }
 
 // console serve the console management console
@@ -86,7 +110,8 @@ func console(w http.ResponseWriter, r *http.Request) {
 	log.Printf("console requested")
 
 	req := Request{
-		URL: r.RequestURI,
+		URL:         r.RequestURI,
+		BlockedURLs: getBlockedURLs(),
 	}
 
 	tmp, err := template.ParseFiles("console.html")
