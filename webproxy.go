@@ -14,10 +14,11 @@ import (
 	"net/http/httputil"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
-var cache = make(map[string][]byte)
+var cache sync.Map
 
 // handler checks the request method and directs the
 // client to either tunnel or not.
@@ -63,8 +64,9 @@ func isBlocked(url string) bool {
 // getFromCache looks for the uri in cache and returns
 // it if it is available, otherwise returns nil.
 func getFromCache(uri string) *[]byte {
-	if c, ok := cache[uri]; ok {
-		return &c
+	if c, ok := cache.Load(uri); ok {
+		d := c.([]byte)
+		return &d
 	}
 	return nil
 }
@@ -72,8 +74,8 @@ func getFromCache(uri string) *[]byte {
 // addToCache adds the most recent page in cache if
 // it is not available.
 func addToCache(uri string, content []byte) {
-	if _, ok := cache[uri]; !ok {
-		cache[uri] = content
+	if _, ok := cache.Load(uri); !ok {
+		cache.Store(uri, content)
 	}
 }
 
@@ -209,8 +211,8 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 	uri := r.RequestURI
 
 	// Check if the webpage being requested is cached.
-	data := cache[uri]
-	if data == nil {
+	val, ok := cache.Load(uri)
+	if val == nil || !ok {
 		// Data is not in cache.
 		log.Printf("data not cached: %v", uri)
 		// Fetch data and update cache.
@@ -223,7 +225,13 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("cache hit for %v", uri)
+	data, ok := val.([]byte)
+	if data == nil || !ok {
+		log.Printf("error getting data from cache: %v", uri)
+		w.WriteHeader(http.StatusExpectationFailed)
+		return
 
+	}
 	// Send the response to client from cache dump.
 	newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
 	if newResp == nil || err != nil {
@@ -297,7 +305,7 @@ func fetchAndUpdate(w http.ResponseWriter, r *http.Request) bool {
 		io.Copy(w, resp.Body)
 	} else {
 		// If response is dumped, add it to cache.
-		cache[uri] = data
+		addToCache(uri, data)
 		// Send a response to requester from dump.
 		newResp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(data)), nil)
 		if err != nil {
