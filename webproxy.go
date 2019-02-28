@@ -1,5 +1,5 @@
 // Web Proxy App
-// Sulla Montes - montess@tcd.ie - 15324631
+// Sulla Montes - montess@tcd.ie
 package main
 
 import (
@@ -272,6 +272,9 @@ func handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Web Proxy App
+	// Sulla Montes - montess@tcd.ie
+
 	time := time.Since(start)
 	log.Printf("request: %v, duration: %v, cached: yes", uri, time)
 
@@ -349,3 +352,6 @@ func main() {
 
 	log.Fatal(s.ListenAndServe())
 }
+
+// Web Proxy App
+// Sulla Montes - montess@tcd.ie
