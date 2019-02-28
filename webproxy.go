@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -24,7 +23,7 @@ var cache sync.Map
 // client to either tunnel or not.
 func handler(w http.ResponseWriter, r *http.Request) {
 	// Check if the URL requested is not blocked.
-	if isBlocked(r.RequestURI) {
+	if isBlocked(r.URL.Hostname()) {
 		log.Printf("URL requested is blocked: %v", r.RequestURI)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -54,7 +53,8 @@ func isBlocked(url string) bool {
 	// Check if the url is blocked by iterating through file.
 	scn := bufio.NewScanner(f)
 	for scn.Scan() {
-		if strings.Contains(url, scn.Text()) {
+		log.Printf("url to block: %v", url)
+		if scn.Text() == url {
 			return true
 		}
 	}
