@@ -1,2 +1,4 @@
-# webproxy
-Web Proxy in Golang
+# Web Proxy in Go
+Advanced Telecommunications module assignment.
+### Owner
+Sulla Montes
